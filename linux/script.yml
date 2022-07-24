@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+namespace: test
+metadata:
+  name: server-deployment # The name of this deployment  a deployment is a collection of pods
+  labels:
+    app: server
+spec:
+  replicas: 1 # the number of the clones of the pods or container we want
+  selector: 
+    matchLabels:
+      app: server # this tells the api server how to select the pods that belong to this deployment
+  template:  # this specificies the template of each pod
+    metadata:
+      labels: # this is the label attached to each of the pods generated
+        app: server # this key value specificies how the pods are identified. a key and container name
+    spec: 
+      containers: 
+      - name: server # specifies the name of the container
+        image: {{MY_NEW_IMAGE}}
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          failureThreshold: 3
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          failureThreshold: 3
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: "100m"
+        ports:
+        - containerPort: 80 # the port exposed by that container
+
+---
+
+apiVersion: v1
+kind: Service # A service simply receive external traffic and forward it to designated deployment
+metadata:
+  name: server-nodeport-service
+spec:
+  type: NodePort
+  selector:
+    app: server # Selects only pods which have this label
+  ports:
+    - port: 80 # listen port
+      targetPort: 80 # pod/ container port
+      nodePort: 30007 # binding port to listen port
+
+---
+# For convenience lets use ConfigMap to save database env, on production we should load it as secrets
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-secret
+  labels:
+    app: mysql
+data:
+  MYSQL_USER: test
+  MYSQL_PASS: password
+  MYSQL_DB: testdb
+  MYSQL_ROOT_PASSWORD: password
+
+---
+# Mysql statefulset: Using statefulset so as to avoid write conflict on scale
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql-statefulset 
+spec:
+  replicas: 1 
+  selector: 
+    matchLabels:
+      app: mysql 
+  template:  
+    metadata:
+      labels: 
+        app: mysql 
+    spec: 
+      volumes: 
+        - name: mysql-storage 
+          persistentVolumeClaim:
+            claimName: database-persistent-volume-claim 
+      containers: 
+      - name: mysql 
+        image: mysql 
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+          - name: mysql-storage 
+            mountPath: /var/lib/mysql
+            subPath: mysql 
+        envFrom:
+            - configMapRef:
+                name: mysql-secret        
+# we chose to use volumeClaimTemplates so that each replica gets a volume by default
+volumeClaimTemplates:
+- metadata:
+    name: mysql-storage
+  spec:
+    accessModes: [ "ReadWriteOnce" ]
+    resources:
+      requests:
+        storage: 5Gi
+       
